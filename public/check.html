@@ -1,0 +1,165 @@
+<html>
+<head>
+	<title>我爱鉴黄</title>
+	<script src="./js/jquery.js"></script>
+	<script src="./js/socketio.js"></script>
+	<link rel="stylesheet" href="./css/style.css">
+</head>
+<body style="text-align:center">
+<div id='code-div' style="margin:auto;   position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;  width:400px; height:100%;">
+	<block>第-<i id="successNum">?</i>-个</block>
+	<div><img id="image" width="250px"/></div>
+	<div>
+		<input id="label" style="width: 220px; line-height: 40px; font-size: 32px; text-align: center;" onkeypress="press()"/>
+		</br>
+		<button type="button" onclick="check()">Submit</button>
+	</div>
+</div>
+<div id="wrong-list-div" style="margin:0 auto; position: absolute;top: 0; left: 0; bottom: 0; right: 0; height:100%; display: none">
+	<h3>本轮打码游戏已结束，围观战绩，敬请期待下一轮</h3>
+	<h5>错误汇总</h5>
+	<table align="center" >
+		<tr>
+			<th>图片</th>
+			<th>打码人/结果</th>
+			<th>鉴黄人/结果</th>
+			<th>最终结果</th>
+		</tr>
+	</table>
+</div>
+
+<script>
+    $("#label").focus();
+    let socket = io(location.host, { "transports" : ["websocket"]});
+
+    let g_config = undefined;
+    socket.on('connect', () => {
+        console.log('连接上服务器');
+
+        socket.emit('fetch_config', {});
+    });
+
+    socket.on('config_fetched', ({Config}) => {
+        console.log('鉴黄数据初始化');
+
+        g_config = Config;
+        window.parent.document.getElementById('title').innerHTML = '鉴黄战场';
+        window.parent.document.getElementById('description').innerHTML = '验证打码：+'+g_config.manualCheck.weight.check+'分； 发现错误者：+'+g_config.manualCheck.weight.foundFalse+'分；错误者：-'+Config.manualCheck.weight.false+'分';
+        window.parent.document.getElementById('target-number').innerHTML = (g_config.targetNumber).toString();
+
+        socket.emit('fetch_checking', {});
+	});
+
+    let checkingData = undefined;
+    socket.on('checking_fetched', (data) => {
+        checkingData = data;
+        let {image, captcha, count, codeUser} = data;
+        $("#label").focus();
+        $("#image").attr("src", `data:image/png;base64,${image}`);
+        $('#successNum').html(count);
+        window.parent.document.getElementById('target-number').innerHTML = (g_config.targetNumber - count).toString();
+    });
+
+    socket.on('checking_pool_drained', ({}) => {
+        $("#code-div").remove();
+        alert('打码结束，请围观战绩');
+        socket.emit('get_wrong_list',{});
+    });
+
+    socket.on('wrong_list_fetched',(wrongList) => {
+        $("#wrong-list-div").show();
+        for(let i=0; i<wrongList.length; ++i){
+            let text = '<tr>' +
+				'<td><img id="image" width="100px" src="data:image/png;base64,'+wrongList[i].image+'"/></td>' +
+				'<td>'+wrongList[i].codeUser+'/'+wrongList[i].codeCaptcha+'</td>' +
+				'<td>'+wrongList[i].checkUser+'/'+wrongList[i].checkCaptcha+'</td>' +
+				'<td>'+wrongList[i].finalCaptcha+'</td>' +
+				'</tr>';
+            $("table").append(text);
+		}
+	});
+
+    socket.on('rate', ({rateList}) => {
+        let str =  `<thead>
+            <tr>
+                <th>名字</th>
+                <th>排名</th>
+                <th>荣誉值</th>
+            </tr>
+            </thead>
+            `;
+        let num = 1;
+        for (let rate of rateList) {
+            if (localStorage.getItem('name') === rate[name]) {
+                window.parent.document.getElementById('my_rate').innerHTML = ''+num;
+            }
+            if (num === 1 ){
+                window.parent.document.getElementById('first_name').innerHTML = rate.name;
+            }
+            str += `<tr>
+                <th>${rate.name}</th>
+                <th>${num++}</th>
+                <th>${rate.count}</th>
+            </tr>`;
+        }
+        window.parent.document.getElementById('rate_p').innerHTML = str;
+    });
+
+    function press() {
+        if (event.keyCode === 13) {
+            check();
+        }
+    }
+
+    function check() {
+        let labelObj = $("#label");
+        let captcha = labelObj.val();
+        //注意：对于undefined的检查返回true
+        if (!captcha || !new RegExp(g_config.captchaPattern).test(captcha)) {
+            alert('校验不通过，请认真核查');
+            return ;
+        }
+
+        if(captcha.toUpperCase() !== checkingData.captcha.toUpperCase()){
+			captcha = dealWithDiff({checkCaptcha: captcha, codeCaptcha: checkingData.captcha});
+        }
+
+        socket.emit('submit_checking', {
+            image: checkingData.image,
+            captcha,
+			user: localStorage.getItem('name'),
+			num: checkingData.count
+        });
+        labelObj.val('');
+        socket.emit('fetch_checking', {});
+    }
+
+    function dealWithDiff({checkCaptcha, codeCaptcha}) {
+        let finalCaptcha = prompt('狭路相逢勇者胜,请认真输入正确结果','');
+        while (!finalCaptcha || !new RegExp(g_config.captchaPattern).test(finalCaptcha)){
+            finalCaptcha = prompt('输入验证码校验不通过，请重新输入哦','');
+		}
+        let wrongUserFlag = undefined;
+        if ( finalCaptcha.toUpperCase() === codeCaptcha.toUpperCase() ){
+            wrongUserFlag = 'checkUser';
+        } else if( finalCaptcha.toUpperCase() === checkCaptcha.toUpperCase()){
+            wrongUserFlag = 'codeUser';
+        } else{
+            wrongUserFlag = 'both';
+        }
+        socket.emit('deduct_points', {
+            image: checkingData.image,
+            codeCaptcha,
+            codeUser: checkingData.codeUser,
+            checkCaptcha,
+            checkUser: localStorage.getItem('name'),
+            finalCaptcha,
+            wrongUserFlag: wrongUserFlag
+        });
+        return finalCaptcha;
+	}
+
+</script>
+</body>
+</html>

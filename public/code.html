@@ -1,0 +1,108 @@
+<html>
+<head>
+    <title>我爱打码</title>
+    <script src="./js/jquery.js"></script>
+    <script src="./js/socketio.js"></script>
+</head>
+<body style="text-align:center">
+<div style="margin:auto;   position: absolute;
+  top: 0; left: 0; bottom: 0; right: 0;  width:400px; height:100%;">
+    <block>第-<i id="successNum"> ? </i>-个</block>
+    <div><img id="image" width="250px"/></div>
+    <div>
+        <input id="label" style="width: 220px; line-height: 40px; font-size: 32px; text-align: center;" onkeypress="press()"/>
+        </br>
+        <button type="button" onclick="code()">Submit</button>
+    </div>
+</div>
+
+<script>
+    let socket = io(location.host, { "transports" : ["websocket"]});//todo 后面的是什么意思？
+
+    let g_config = undefined;
+    socket.on('connect', () => {
+        console.log('打码连接上服务器');
+
+        socket.emit('fetch_config', {});
+    });
+
+    socket.on('config_fetched',({Config}) => {
+        console.log('打码数据初始化');
+        g_config = Config;
+        window.parent.document.getElementById('title').innerHTML = '打码战场';
+        window.parent.document.getElementById('description').innerHTML = '打码权重：'+g_config.manualCode.weight.code+'分';
+        window.parent.document.getElementById('target-number').innerHTML = (g_config.targetNumber).toString();
+
+        socket.emit('fetch_coding', {});
+    });
+
+    let codingData = undefined;
+    socket.on('coding_fetched', (data) => {
+        codingData = data;
+        let {image, captcha, count} = data;
+        $("#label").val(captcha).focus();
+        $("#image").attr("src", `data:image/png;base64,${image}`);
+        $('#successNum').html(count);
+        window.parent.document.getElementById('target-number').innerHTML = (g_config.targetNumber - count).toString();
+    });
+
+    socket.on('coding_pool_drained', ({}) => {
+        g_config.manualCode.isOpen = false;
+        alert('暂无打码任务，请转战鉴黄场！加油！');
+        window.location.href="./check.html";
+    });
+
+    socket.on('rate', ({rateList}) => {
+        let str =  `<thead>
+            <tr>
+                <th>名字</th>
+                <th>排名</th>
+                <th>荣誉值</th>
+            </tr>
+            </thead>
+            `;
+        let num = 1;
+        for (let rate of rateList) {
+            if (localStorage.getItem('name') === rate.name) {
+                window.parent.document.getElementById('my_rate').innerHTML = ''+num;
+            }
+            if (num === 1 ){
+                window.parent.document.getElementById('first_name').innerHTML = rate.name;
+            }
+            str += `<tr>
+                <th>${rate.name}</th>
+                <th>${num++}</th>
+                <th>${rate.count}</th>
+            </tr>`;
+        }
+        window.parent.document.getElementById('rate_p').innerHTML = str;
+    });
+
+    function press() {
+        if (event.keyCode === 13) {
+            code();
+        }
+    }
+
+    function code() {
+        let labelObj = $("#label");
+        let label = labelObj.val();
+
+        //注意：对于undefined的检查返回true
+        if (!label || !new RegExp(g_config.captchaPattern).test(label)) {
+            alert('校验不通过，请认真核查');
+            return ;
+        }
+
+        socket.emit('submit_coding', {
+            image: codingData.image,
+            captcha: label,
+            user: localStorage.getItem('name')
+        });
+        labelObj.val('');
+
+        socket.emit('fetch_coding', {});
+    }
+</script>
+</body>
+</html>
